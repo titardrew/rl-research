@@ -1,0 +1,38 @@
+GLOBAL TODOs:
+
+- Add clipfrac, approxkl, explained_variance, returns, values, proba_pred
+- Run TFAgents with the same set of parameters on pybullet[roboschool]
+    - Benchmark/Debug using pybullet[roboschool]
+- Add evalutation
+- Implement Recurrent policies
+- Implement msPPO
+
+Stats:
+
+-------------------------------
+         update #N:
+reward/epi_min:        x.xx
+reward/epi_mean:       x.xx
+reward/epi_max:        x.xx
+reward/epi_std:        x.xx
+reward/step_min:       x.xx
+reward/step_mean:      x.xx
+reward/step_max:       x.xx
+reward/step_std:       x.xx
+len/min:               x.xx
+len/mean:              x.xx
+len/max:               x.xx
+len/std:               x.xx
+n_steps/total:         xxxx
+n_steps/per_update:    xx.x
+n_episodes/total:      xxxx
+n_episodes/per_update: xx.x
+ppo/loss:              x.xx
+ppo/policy_loss:       x.xx
+ppo/value_loss:        x.xx
+ppo/KL:                x.xx
+ppo/entropy:           x.xx
+time/elapsed:          xxxx.xx
+time/estimate:         xxxx.xx
+time/per_update:       xxxx.xx
+time/per_step:         xxxx.xx
