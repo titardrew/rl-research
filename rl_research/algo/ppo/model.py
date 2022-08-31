@@ -35,7 +35,7 @@ class AC_Categorical:
             value_pred = self.value_head(features)
         else:
             value_pred = self.value_head(obs)
-        
+
         return log_pi, value_pred
 
     def action(self, obs, greedy=False):
@@ -77,7 +77,7 @@ class AC_Categorical:
 
     def save(self, path):
         torch.save(self, str(path))
-        
+
 
 class AC_ContNormal:
     ## cont -> (traj_len, n_actors, action_shape), sigma
@@ -112,13 +112,14 @@ class AC_ContNormal:
             value_pred = self.value_head(features)
         else:
             value_pred = self.value_head(obs)
-        
+
         return mean, value_pred
 
     def action(self, obs, greedy=False):
         features = self.feature_extractor(obs)
         means = self.policy_head(features)
-        return self.select_action(means, greedy)
+        act, _ = self.select_action(means, greedy=greedy)
+        return act
 
     def value(self, obs):
         if self.shared_extractor:
@@ -133,14 +134,11 @@ class AC_ContNormal:
         return torch.diag(self.logvar.exp())
 
     def select_action(self, means, action=None, greedy=False):
-        #d = dist.MultivariateNormal(means, self.covariance_matrix())
         d = dist.Normal(means, self.logvar.exp())
         d = dist.Independent(d, 1)
-        #print(d.mean.shape, d.stddev.shape, d.sample().shape)
         if greedy:
             action = means
-        elif action is None: 
-            #action = means + self.logvar.exp() * torch.randn_like(means)
+        elif action is None:
             action = d.sample()
 
         log_pi = d.log_prob(action)
@@ -150,7 +148,6 @@ class AC_ContNormal:
     def entropy(self, means):
         d = dist.Normal(means, self.logvar.exp())
         d = dist.Independent(d, 1)
-        #d = dist.MultivariateNormal(means, self.covariance_matrix())
         return d.entropy()
 
     def save(self, path):

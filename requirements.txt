@@ -1,0 +1,14 @@
+# Common numeric libs.
+numpy
+opencv-python
+torch
+
+# PyAV lib for video processing/recording.
+av
+
+# OpenAI Gym.
+gym
+
+# Simulation software.
+mujoco-py
+pybullet

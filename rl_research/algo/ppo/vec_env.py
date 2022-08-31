@@ -19,7 +19,7 @@ class CloudpickleWrapper(object):
 
 
 class VecEnv:
-    """ 
+    """
         DESCRIPTION. The class manages the separate processes which run the
             instances of an envitonment. The implementation is quite common
             in RL applications. The processes are spawned in constructor and
@@ -43,12 +43,12 @@ class VecEnv:
                 `try_get_recordings(self)`
             to get the buffer and to clean up the object recording state.
             If the recording is still in progress, the method will return None.
-            
+
             _Don't put_ a postprocessing of the recording (e.g merging game
             frames into mpeg file with pyav, etc.) inside the VecEnv. This
-            will make the code even more messy and unreadable, because of the
+            will make the code even more messy and unreadable, because of
             enormous cases that the code should cover. For instance, we may
-            want to compres the environment's `render()` outputs, or would
+            want to compress the environment's `render()` outputs, or would
             like to make split-screen recording, or to deal with complicated
             `render()` outputs.
     """
@@ -88,21 +88,27 @@ class VecEnv:
         self.recording_buffer = []
         self.recording_buffer_epi = []
         self.recording_render_mode = "rgb_array"
+        self.recording_in_progress = False
 
-    def start_recording(self, n_episodes, size=None, mode="rgb_array"):
-        self.recording_epi_remains = n_episodes
-        self.recording_buffer = []
-        self.recording_buffer_epi = [[] for _ in range(self.n_workers)]
-        self.recording_render_mode = mode
-        self.recording_size = size
-        self.recording_mask = [0 for _ in range(self.n_workers)]
+    def start_recording(self, n_episodes, size=None, mode="rgb_array", force_restart=False):
+        if force_restart or not self.recording_in_progress:
+            self.recording_in_progress = True
+            self.recording_epi_remains = n_episodes
+            self.recording_buffer = []
+            self.recording_buffer_epi = [[] for _ in range(self.n_workers)]
+            self.recording_render_mode = mode
+            self.recording_size = size
+            self.recording_mask = [0 for _ in range(self.n_workers)]
+            return True
+        return False
 
     def try_get_recordings(self):
-        if self.recording_epi_remains == 0 and len(self.recording_buffer) > 0:
+        if self.recording_epi_remains == 0 and self.recording_in_progress:
             buf = self.recording_buffer
             self.recording_buffer = []
             self.recording_buffer_epi.clear()
             self.recording_mask = [0 for _ in range(self.n_workers)]
+            self.recording_in_progress = False
             return buf
         return None
 
@@ -179,7 +185,7 @@ class VecEnv:
             recv_fn, _ = self.workers[i]
             recs.append(recv_fn())
         return recs
-        
+
     def render_idx(self, idx, mode, size=None):
         recv_fn, send_fn = self.workers[idx]
         send_fn(("render", (mode, size)))

@@ -1,4 +1,5 @@
 import time
+import warnings
 
 import cv2
 import torch
@@ -39,6 +40,30 @@ class Timer:
             return "%.3fms." % m_secs
         else:
             return "%.3fmcs." % mc_secs
+
+
+def safe_reduce(func, arr: np.ndarray, err_msg):
+    if len(arr) > 0:
+        return func(arr)
+    else:
+        warnings.warn(err_msg)
+        return 0
+
+
+def safe_min(arr: np.ndarray, err_msg="safe_min got an empty array"):
+    return safe_reduce(np.min, arr, err_msg)
+
+
+def safe_max(arr: np.ndarray, err_msg="safe_max got an empty array"):
+    return safe_reduce(np.max, arr, err_msg)
+
+
+def safe_mean(arr: np.ndarray, err_msg="safe_mean got an empty array"):
+    return safe_reduce(np.mean, arr, err_msg)
+
+
+def safe_std(arr: np.ndarray, err_msg="safe_std got an empty array"):
+    return safe_reduce(np.std, arr, err_msg)
 
 
 class Statistics:
@@ -153,20 +178,24 @@ class Statistics:
         stats["n_episodes/total"] = self.total_episodes
         stats["n_updates"] = self.total_updates
 
-        stats["reward/epi_min"]  = np.min(self.epi_rewards)
-        stats["reward/epi_mean"] = np.mean(self.epi_rewards)
-        stats["reward/epi_max"]  = np.max(self.epi_rewards)
-        stats["reward/epi_std"]  = np.std(self.epi_rewards)
+        err_msg = ("Cannot reduce statistics. No full episodes "
+                   "in trajectory storage. You may want to "
+                   "increase traj_len, reduce n_workers or "
+                   "validate rewards separately.")
+        stats["reward/epi_min"]  = safe_min(self.epi_rewards, err_msg)
+        stats["reward/epi_mean"] = safe_mean(self.epi_rewards, err_msg)
+        stats["reward/epi_max"]  = safe_max(self.epi_rewards, err_msg)
+        stats["reward/epi_std"]  = safe_std(self.epi_rewards, err_msg)
 
         stats["reward/step_min"]  = np.min(self.step_rewards)
         stats["reward/step_mean"] = np.mean(self.step_rewards)
         stats["reward/step_max"]  = np.max(self.step_rewards)
         stats["reward/step_std"]  = np.std(self.step_rewards)
 
-        stats["len/min"]  = np.min(self.epi_lens)
-        stats["len/mean"] = np.mean(self.epi_lens)
-        stats["len/max"]  = np.max(self.epi_lens)
-        stats["len/std"]  = np.std(self.epi_lens)
+        stats["len/min"]  = safe_min(self.epi_lens, err_msg)
+        stats["len/mean"] = safe_mean(self.epi_lens, err_msg)
+        stats["len/max"]  = safe_max(self.epi_lens, err_msg)
+        stats["len/std"]  = safe_std(self.epi_lens, err_msg)
 
         stats["ppo/loss"]        = np.mean(self.ppo_loss)
         stats["ppo/value_loss"]  = np.mean(self.ppo_value_loss)
@@ -189,10 +218,10 @@ class Statistics:
         self.steps_since_last_reduce = 0
         self.updates_since_last_reduce = 0
         self.time_per_update = 0
-        self.epi_rewards_buffer = [0 for _ in range(self.n_workers)]
+        # self.epi_rewards_buffer = [0 for _ in range(self.n_workers)]
         self.epi_rewards = []
         self.step_rewards = []
-        self.epi_lens_buffer = [0 for _ in range(self.n_workers)]
+        # self.epi_lens_buffer = [0 for _ in range(self.n_workers)]
         self.epi_lens = []
 
         self.timer.start()
@@ -224,6 +253,7 @@ class Statistics:
             print("-"*max(lens))
 
     def dump_video(self, vids, tag, fps=5, size=None):
+        # import pdb; pdb.set_trace()
         if self.tb_writer:
             dtype = vids[0][0].dtype
             if dtype != "uint8":
@@ -234,11 +264,11 @@ class Statistics:
                     x = x - x.min()
                     x /= x.max()
                     x *= 255
-                    return torch.tensor(x).permute(0, 1, 4, 2, 3) # N T C H W
+                    return torch.tensor(x).permute(0, 3, 1, 2).unsqueeze(0) # T C H W
 
                 norm_fn = norm_uint8
             else:
-                norm_fn = lambda x: torch.tensor(x).permute(0, 1, 4, 2, 3)
+                norm_fn = lambda x: torch.tensor(x).permute(0, 3, 1, 2).unsqueeze(0)
             if size:
                 for n_vid in range(len(vids)):
                     for n_fr in range(len(vids[n_vid])):
@@ -249,9 +279,10 @@ class Statistics:
                         elif isinstance(size, tuple) or isinstance(size, list):
                             w, h = size
                         vids[n_vid][n_fr] = cv2.resize(rec, (w, h))
-            self.tb_writer.add_video(
-                tag,
-                norm_fn(vids),
-                self.total_steps,
-                fps=fps
-            )
+            for vid in vids:
+                self.tb_writer.add_video(
+                    tag,
+                    norm_fn(vid),
+                    self.total_steps,
+                    fps=fps
+                )

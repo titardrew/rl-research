@@ -1,3 +1,5 @@
+from typing import Optional as Opt
+import typing as t
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,8 +10,103 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from ppo.rollout import TorchStorage
-from ppo.statistics import Statistics, Timer
+from rl_research.algo.ppo.rollout import TorchStorage
+from rl_research.algo.ppo.statistics import Statistics, Timer
+from rl_research.algo.ppo.running_mean_std import RunningMeanStd
+from rl_research.algo.ppo.model import AC_ContNormal
+import rl_research.recording as recording
+
+
+@dataclass
+class Preprocessor_State:
+    obs_shape:       tuple       = (1,)
+    obs_mean:        np.ndarray  = field(default=np.array([0.0]))
+    obs_var:         np.ndarray  = field(default=np.array([1.0]))
+    return_mean:     float       = 0.0
+    return_var:      float       = 1.0
+    obs_clip:        np.ndarray  = field(default=np.array([float("inf")]))
+    reward_clip:     float       = float("inf")
+    discount_factor: float       = 0.99
+
+
+class Preprocessor:
+    EPS_ = 1e-7
+
+    def __init__(self,
+        obs_shape:       tuple,
+        obs_clip:        float,
+        reward_clip:     float,
+        discount_factor: float
+    ):
+        self.obs_shape = obs_shape
+        self.discount_factor = discount_factor
+
+        self.obs_clip = obs_clip
+        self.reward_clip = reward_clip
+
+        self.running_mean_std_obs    = RunningMeanStd(shape=self.obs_shape)
+        self.running_mean_std_return = RunningMeanStd()
+
+        self.return_vec = 0.0  # Supposed to have a shape = (batch_size, )
+
+    def process(self, obs_vec: np.ndarray, reward_vec: Opt[np.ndarray]):
+        obs_mean = self.running_mean_std_obs.mean
+        obs_var  = self.running_mean_std_obs.var
+
+        obs_vec_    = (obs_vec - obs_mean) / np.sqrt(obs_var + self.EPS_)
+        obs_vec_    = np.clip(obs_vec_, -self.obs_clip, self.obs_clip)
+
+        if reward_vec is not None:
+            ret_var  = self.running_mean_std_return.var
+
+            reward_vec_ = reward_vec / np.sqrt(ret_var + self.EPS_)
+            reward_vec_ = np.clip(reward_vec_, -self.reward_clip, self.reward_clip)
+        else:
+            reward_vec_ = None
+
+        return obs_vec_, reward_vec_
+
+    def update(self, obs_vec: np.ndarray, reward_vec: Opt[np.ndarray], done_vec: np.ndarray):
+        self.running_mean_std_obs.update(obs_vec)
+
+        if reward_vec is not None:
+            self.return_vec = self.return_vec * self.discount_factor + reward_vec
+            self.running_mean_std_return.update(self.return_vec)
+
+            self.return_vec[done_vec] = 0.0
+
+
+    def update_and_process(self, obs_vec: np.ndarray, reward_vec: np.ndarray, done_vec: np.ndarray):
+        self.update(obs_vec, reward_vec, done_vec)
+        return self.process(obs_vec, reward_vec)
+
+    def get_state(self):
+        return Preprocessor_State(
+            obs_shape       = self.obs_shape,
+            obs_mean        = self.running_mean_std_obs.mean,
+            obs_var         = self.running_mean_std_obs.var,
+            return_mean     = self.running_mean_std_return.mean,
+            return_var      = self.running_mean_std_return.var,
+            obs_clip        = self.obs_clip,
+            reward_clip     = self.reward_clip,
+            discount_factor = self.discount_factor,
+        )
+
+    @staticmethod
+    def from_state(state: Preprocessor_State):
+        prep = Preprocessor(state.obs_shape, state.obs_clip, state.reward_clip, state.discount_factor)
+        prep.set_state(state)
+        return prep
+
+    def set_state(self, state: Preprocessor_State):
+        self.obs_shape                    = self.obs_shape,
+        self.running_mean_std_obs.mean    = state.obs_mean
+        self.running_mean_std_obs.var     = state.obs_var
+        self.running_mean_std_return.mean = state.return_mean
+        self.running_mean_std_return.var  = state.return_var
+        self.obs_clip                     = state.obs_clip
+        self.reward_clip                  = state.reward_clip
+        self.discount_factor              = state.discount_factor
 
 
 def ppo_update(
@@ -54,6 +151,7 @@ def ppo_update(
                     adv_target,
                 ) = batch
 
+
                 policy_out, value_pred = model.policy_and_value(obs_prev)
                 act, log_pi = model.select_action(policy_out, action=actions)
                 entropy = model.entropy(policy_out).mean()
@@ -68,7 +166,7 @@ def ppo_update(
                     value_pred_clipped = (
                         value_preds_saved +
                         torch.clamp(
-                            value_pred - value_preds_saved, 
+                            value_pred - value_preds_saved,
                             -params.clip_value_loss,
                             +params.clip_value_loss
                         )
@@ -175,12 +273,12 @@ def save_video(frames, name, fps=15):
             container.mux(packet)
     for packet in stream.encode():
         container.mux(packet)
-    container.close() 
+    container.close()
 
 
 @dataclass
 class Params_PPO:
-    n_workers:       int   = 8
+    n_workers:       int   = 1
     traj_len:        int   = 256
     use_gae:         bool  = True
     discount_factor: float = .99
@@ -194,6 +292,8 @@ class Params_PPO:
     value_loss_coef: float = .5
     learning_rate:   float = 7e-4
     eps:             float = 1e-5
+    obs_clip:        float = float("inf")
+    reward_clip:     float = float("inf")
 
 
 @dataclass
@@ -202,7 +302,7 @@ class Params_Stats:
     ckpt_path: Path = field(default=Path())
 
     freq_dump: int = 10
-    freq_vid:  int = 250
+    freq_vid:  int = 50
     freq_ckpt: int = 50
 
 
@@ -211,7 +311,7 @@ class Params:
     ppo:   Params_PPO   = field(default_factory=Params_PPO)
     stats: Params_Stats = field(default_factory=Params_Stats)
 
-    
+
 def ppo_train(
     params,
     model,
@@ -246,9 +346,18 @@ def ppo_train(
         params.ppo,
         model=model
     )
-        
-    obs_cur = env.reset_all()
+
+    preprocessor = Preprocessor(
+            env.observation_space.shape,
+            params.ppo.obs_clip,
+            params.ppo.reward_clip,
+            params.ppo.discount_factor)
+
+    obs_cur_raw = env.reset_all()
     done_cur = [False for _ in range(params.ppo.n_workers)]
+    obs_cur, _ = preprocessor.update_and_process(
+            np.asarray(obs_cur_raw), None, np.asarray(done_cur))
+
     n_updates = 0
 
     best_metric = -float("inf")
@@ -268,33 +377,35 @@ def ppo_train(
         obs_prev = obs_cur
         done_prev = done_cur
 
-        ### TODO: is_good mask (bad_transition) 
+        ### TODO: is_good mask (bad_transition)
         #         Rollout layout:
         # o0 -> o1 -> o2 -> o3 -> o4 -| o0
         # o0 -> o1 -> o2 -> o3 -| o0 -> o1
         # o0 -> o1 -> o2 -> o3 -> o4 -| o0
         # o0 -> o1 -| o0 -> o1 -> o2 -> o3
 
-        if False and isinstance(env.action_space, Box):
-            act = np.clip(act.cpu().numpy(),
+        if isinstance(env.action_space, Box):
+            act_clipped = np.clip(act.cpu().numpy(),
                           env.action_space.low,
                           env.action_space.high)
         else:
-            act = act.cpu().numpy()
+            act_clipped = act.cpu().numpy()
 
         perf_timer.start()
-        obs_cur, reward, done_cur, info = env.step_nonstop(act)
+        obs_cur_raw, reward_raw, done_cur, info = env.step_nonstop(act_clipped)
+
+        obs_cur, reward = preprocessor.update_and_process(np.asarray(obs_cur_raw), np.asarray(reward_raw), np.asarray(done_cur))
+
         env_time = perf_timer.get_elapsed_seconds()
 
         statistics.add_env_data({
             "time_per_env": env_time,
             "actions":      act,
-            "reward":       reward,
+            "reward":       reward_raw,
             "done":         done_prev,
             "info":         info,
             "obs":          obs_prev,
         })
-
 
         if isinstance(env.action_space, Discrete):
             act = torch.LongTensor(act)
@@ -326,16 +437,33 @@ def ppo_train(
                 statistics.reduce(total_timer.get_elapsed_seconds())
                 statistics.dump()
 
-            if n_updates % params.stats.freq_vid == 0:
-                env.start_recording(1, size=300, mode="rgb_array")
-
             if n_updates % params.stats.freq_ckpt == 0:
+                path = params.stats.ckpt_path
                 if statistics.stats["reward/epi_mean"] > best_metric:
-                    model.save(params.stats.ckpt_path / "best.pth")
-                model.save(params.stats.ckpt_path / f"{n_updates}.pth")
-                
+                    model.save(path / "best.pth")
+                    torch.save(preprocessor.get_state(), path / "best.preproc.pth")
+                model.save(path / f"{n_updates}.pth")
+                torch.save(preprocessor.get_state(), path / f"{n_updates}.preproc.pth")
 
-        res = env.try_get_recordings()
-        if res:
-            statistics.dump_video(res, "episodes", fps=15, size=None)
-            #save_video(res[0], params.stats.run_path / f"{n_updates}.mp4")
+            if n_updates % params.stats.freq_vid == 0:
+                # import pdb; pdb.set_trace()
+                has_started = env.start_recording(n_episodes=1, size=300, mode="rgb_array")
+                if has_started:
+                    print("Started recording video...")
+
+            res = env.try_get_recordings()
+            if res:
+                print("Uploading video recordings to tensorboard...")
+                statistics.dump_video(res, "episodes", fps=15, size=None)
+            # save_video(res[0], params.stats.run_path / f"{n_updates}.mp4")
+
+
+class PPO_Agent(recording.Agent):
+    def __init__(self, preprocessor, model):
+        self.preprocessor = preprocessor
+        self.model = model
+
+    def get_action(self, obs) -> t.Any:
+        obs_prep, _ = self.preprocessor.process(np.asarray(obs), None)
+        with torch.no_grad():
+            return self.model.action(torch.FloatTensor(obs_prep), greedy=True).numpy()

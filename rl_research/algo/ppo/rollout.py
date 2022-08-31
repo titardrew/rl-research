@@ -7,17 +7,6 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 
 """
-    Storages are usually easy to implement, so we won't provide
-        any generic primitives to avoid extra complexity
-        and poor readablility. For instance, we could try to add
-        the support for dictionary-based observation spaces. Here's
-        why this is a bad idea. First, this is not that hot feature,
-        so most users would be forced to read a lot of complicated
-        noop code to track the data flow. Second, the best form of
-        data processing behaviour expression is a code. We should not
-        force a user to learn the entire set of parameters or delegates
-        to enable the required preprocessing, this is insane.
-
       0    1    2     3    4    5    6    7    8    9    10   11
     @---------------@-----------------------------@--------------@
     | o0 - o1 - o2  | o0 - o1 - o2 - o3 - o4 - o5 | o0 - o1 ~ o2 | obs_prev
@@ -31,7 +20,7 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 """
 
-class TorchStorage: 
+class TorchStorage:
     """
         Simple storage for box-like observation spaces and
             either Discrete or 1-d action spaces.
@@ -48,7 +37,7 @@ class TorchStorage:
         "actions",
     ]
 
-    #TODO: recurrent generator, 
+    #TODO: recurrent generator,
     def __init__(self, traj_len, n_actors, obs_shape, act_space, h_state_size):
         """
             Currently recurrent stuff is not supported!!
@@ -81,8 +70,6 @@ class TorchStorage:
         if set(rollout.keys()) != set(self._rollout_spec):
             warnings.warn("Incomplete rollout")
         for name in rollout:
-            #print(f"rollout[{name}] {rollout[name].shape}")
-            #print(f"_st_i[{name}] {self._st[name][self.i_step].shape}")
             self._st[name][self.i_step].copy_(rollout[name])
 
         self.i_step = (self.i_step + 1) % self.traj_len
@@ -114,7 +101,6 @@ class TorchStorage:
             for i in reversed(range(self.traj_len)):
                 rets[i] = rets[i + 1] * discount_factor * m[i + 1] + r[i]
                 # * (1 - is_good[i + 1]) + good[i + 1] * (1 - m[i + 1]
-        
         adv = rets[:-1] - val[:-1]
         return (adv - adv.mean()) / (adv.std() + 1e-8)
 
